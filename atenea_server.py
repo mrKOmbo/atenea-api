@@ -4,6 +4,7 @@ Usa Saptiva KAL. No requiere LangGraph ni Ollama.
 Ejecutar: python atenea_server.py
 """
 import os
+import json
 import time
 import requests
 from fastapi import FastAPI, HTTPException
@@ -11,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
-# Cargar .env.local
 for path in [".env.local", ".env"]:
     if os.path.exists(path):
         with open(path) as f:
@@ -23,6 +23,8 @@ for path in [".env.local", ".env"]:
 
 SAPTIVA_KEY = os.environ.get("SAPTIVA_API_KEY", "")
 SAPTIVA_URL = os.environ.get("SAPTIVA_BASE_URL", "https://api.saptiva.com")
+
+FIELDS = ["businessName", "businessType", "mobility", "businessSize", "description"]
 
 SYSTEM_PROMPT = """Eres ARIA, la asistente inteligente de Atenea para registrar comerciantes ambulantes en la Ciudad de México durante el Mundial FIFA 2026.
 Tu misión es recopilar la información del negocio de forma conversacional, cálida y en español mexicano natural.
@@ -46,6 +48,7 @@ Reglas estrictas:
 - Haz UNA sola pregunta a la vez
 - Si el usuario es poco claro, pide aclaración con amabilidad"""
 
+
 app = FastAPI(title="Atenea Onboarding API")
 
 app.add_middleware(
@@ -65,21 +68,73 @@ class ChatRequest(BaseModel):
     messages: List[Message]
 
 
+def extract_state(messages: list) -> dict:
+    """Extrae el estado más reciente de los mensajes del asistente."""
+    state = {}
+    for m in reversed(messages):
+        if m["role"] == "assistant" and "[[EXTRACTED:" in m["content"]:
+            try:
+                start = m["content"].index("[[EXTRACTED:") + len("[[EXTRACTED:")
+                # Buscar cierre ]] o ] solo
+                rest = m["content"][start:]
+                end = rest.index("]]") if "]]" in rest else rest.index("]")
+                parsed = json.loads(rest[:end] + ("}" if rest[:end].count("{") > rest[:end].count("}") else ""))
+                state = {k: v for k, v in parsed.items() if v and v != "..."}
+                break
+            except Exception:
+                pass
+    return state
+
+
+def build_single_turn(last_user: str, state: dict) -> str:
+    """
+    Saptiva falla con multi-turno para mensajes cortos.
+    Convertimos la conversación en un único mensaje de usuario con contexto embebido.
+    """
+    collected = {k: state[k] for k in FIELDS if k in state and state[k]}
+    missing = [f for f in FIELDS if f not in collected]
+
+    if not missing:
+        next_action = "confirma que el registro está completo y añade [[COMPLETE:true]]"
+    else:
+        next_field = missing[0]
+        field_hints = {
+            "businessName": "el nombre del negocio",
+            "businessType": "el tipo de negocio (food|clothing|crafts|beverages|electronics|services|other)",
+            "mobility": "si es ambulante o punto fijo (mobile|fixed)",
+            "businessSize": "el tamaño del equipo (individual|small|medium)",
+            "description": "una descripción breve de lo que vende",
+        }
+        next_action = f"pregunta por {field_hints.get(next_field, next_field)}"
+
+    state_str = json.dumps(collected, ensure_ascii=False) if collected else "ninguno aún"
+
+    return (
+        f"El comerciante acaba de decir: \"{last_user}\"\n"
+        f"Datos ya confirmados: {state_str}\n"
+        f"Tu siguiente acción: {next_action}.\n"
+        f"Responde como ARIA (máx 2 oraciones en español mexicano) e incluye [[EXTRACTED:{{...}}]] al final con todos los datos confirmados."
+    )
+
+
 def call_saptiva(messages: list, retries: int = 2) -> str:
-    # Saptiva falla con conversaciones multi-turno cortas.
-    # Convertimos el historial a un solo mensaje de contexto para garantizar compatibilidad.
-    # Usar solo los últimos 6 mensajes para mantener contexto corto
-    trimmed = messages[-6:] if len(messages) > 6 else messages
+    last_user = messages[-1]["content"].strip() if messages else ""
+    state = extract_state(messages[:-1])  # estado antes del último mensaje
 
-    # Saptiva devuelve vacío si el último mensaje de usuario es muy corto.
-    # Añadimos contexto mínimo para garantizar respuesta.
-    processed = list(trimmed)
-    if processed and processed[-1]["role"] == "user":
-        last_content = processed[-1]["content"].strip()
-        if len(last_content) < 35:
-            processed[-1] = {"role": "user", "content": last_content + " — continúa el registro por favor"}
+    if len(messages) <= 1:
+        # Primer mensaje: single-turn normal
+        all_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": last_user},
+        ]
+    else:
+        # Mensajes subsecuentes: single-turn con contexto embebido
+        all_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": build_single_turn(last_user, state)},
+        ]
 
-    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + processed
+    print(f"[ARIA] state={state} | last='{last_user[:40]}'")
 
     for attempt in range(retries):
         try:
@@ -110,15 +165,14 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
 
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
-            print(f"[Saptiva] content length={len(content)}")
+            print(f"[Saptiva] content length={len(content)} content='{content[:80]}'")
 
             if content.strip():
-                # Reparar marcador [[EXTRACTED:...]] si quedó truncado (un solo ])
+                # Reparar marcador [[EXTRACTED:...]] si quedó truncado
                 if "[[EXTRACTED:" in content and content.rstrip().endswith("}]") and not content.rstrip().endswith("}]]"):
                     content = content.rstrip() + "]"
                 return content
 
-            # Contenido vacío — reintentar
             print(f"[Saptiva] content vacío, reintentando...")
             if attempt < retries - 1:
                 time.sleep(2)
