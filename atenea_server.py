@@ -69,10 +69,10 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
                     "model": "Saptiva KAL",
                     "messages": all_messages,
                     "temperature": 0.7,
-                    "max_tokens": 80,
+                    "max_tokens": 120,
                     "stream": False,
                 },
-                timeout=40,
+                timeout=45,
             )
 
             print(f"[Saptiva] status={resp.status_code} attempt={attempt+1}")
