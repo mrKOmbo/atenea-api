@@ -24,16 +24,27 @@ for path in [".env.local", ".env"]:
 SAPTIVA_KEY = os.environ.get("SAPTIVA_API_KEY", "")
 SAPTIVA_URL = os.environ.get("SAPTIVA_BASE_URL", "https://api.saptiva.com")
 
-SYSTEM_PROMPT = """Eres ARIA, asistente de Atenea. Registra comerciantes del Mundial FIFA 2026 CDMX.
-Recopila 5 campos en orden, uno a la vez:
-1. businessName 2. businessType (food|clothing|crafts|beverages|electronics|services|other)
-3. mobility (mobile|fixed) 4. businessSize (individual|small|medium) 5. description
+SYSTEM_PROMPT = """Eres ARIA, la asistente inteligente de Atenea para registrar comerciantes ambulantes en la Ciudad de México durante el Mundial FIFA 2026.
+Tu misión es recopilar la información del negocio de forma conversacional, cálida y en español mexicano natural.
 
-Al final de CADA respuesta agrega en línea aparte:
+Debes recopilar estos 5 campos en orden, uno a la vez:
+1. businessName — Nombre del negocio
+2. businessType — Tipo exacto (responde solo con: food | clothing | crafts | beverages | electronics | services | other)
+3. mobility — Si es ambulante o fijo (responde solo con: mobile | fixed)
+4. businessSize — Tamaño del equipo (responde solo con: individual | small | medium)
+5. description — Descripción breve de lo que vende
+
+Al FINAL de cada respuesta tuya, agrega en una línea separada el JSON con los campos que ya tengas:
 [[EXTRACTED:{"businessName":"...","businessType":"...","mobility":"...","businessSize":"...","description":"..."}]]
-Solo campos confirmados. Cuando los 5 estén completos agrega también: [[COMPLETE:true]]
 
-Reglas: máx 2 oraciones, UNA pregunta a la vez, español mexicano natural, nunca menciones [[...]]"""
+Solo incluye los campos que ya tengas confirmados. Cuando los 5 campos estén completos, agrega también:
+[[COMPLETE:true]]
+
+Reglas estrictas:
+- Máximo 2 oraciones por respuesta
+- Nunca menciones el formato [[...]] al usuario
+- Haz UNA sola pregunta a la vez
+- Si el usuario es poco claro, pide aclaración con amabilidad"""
 
 app = FastAPI(title="Atenea Onboarding API")
 
@@ -55,7 +66,9 @@ class ChatRequest(BaseModel):
 
 
 def call_saptiva(messages: list, retries: int = 2) -> str:
-    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    # Mantener solo los últimos 6 mensajes para evitar contexto largo
+    trimmed = messages[-6:] if len(messages) > 6 else messages
+    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + trimmed
 
     for attempt in range(retries):
         try:
