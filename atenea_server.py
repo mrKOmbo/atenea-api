@@ -72,12 +72,18 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
         all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     else:
         trimmed = messages[-6:] if len(messages) > 6 else messages
+        # Separar historial previo del último mensaje del usuario
+        history = trimmed[:-1]
+        last_user = trimmed[-1]["content"].strip()
         conv = "\n".join(
-            f"{'ARIA' if m['role'] == 'assistant' else 'Usuario'}: {m['content'].strip()}"
-            for m in trimmed[:-1]
+            f"{'ARIA' if m['role'] == 'assistant' else 'Comerciante'}: {m['content'].strip()}"
+            for m in history
         )
-        last = trimmed[-1]["content"].strip()
-        wrapped = f"Historial:\n{conv}\n\nUsuario: {last}\n\nARIA:"
+        wrapped = (
+            f"Conversación previa:\n{conv}\n\n"
+            f"El comerciante acaba de responder: \"{last_user}\"\n"
+            f"Genera SOLO tu siguiente respuesta como ARIA (máx 2 oraciones + [[EXTRACTED:...]] al final):"
+        )
         all_messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": wrapped},
