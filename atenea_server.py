@@ -80,7 +80,7 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
                     "model": "Saptiva KAL",
                     "messages": all_messages,
                     "temperature": 0.7,
-                    "max_tokens": 400,
+                    "max_tokens": 150,
                     "stream": False,
                 },
                 timeout=55,
