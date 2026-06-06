@@ -68,22 +68,18 @@ class ChatRequest(BaseModel):
 def call_saptiva(messages: list, retries: int = 2) -> str:
     # Saptiva falla con conversaciones multi-turno cortas.
     # Convertimos el historial a un solo mensaje de contexto para garantizar compatibilidad.
-    if len(messages) <= 1:
-        all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    else:
-        trimmed = messages[-6:] if len(messages) > 6 else messages
-        history = trimmed[:-1]
-        last_user = trimmed[-1]["content"].strip()
-        conv = "\n".join(
-            f"{'ARIA' if m['role'] == 'assistant' else 'Comerciante'}: {m['content'].strip()}"
-            for m in history
-        )
-        # Historial en system prompt para evitar que Saptiva alucine turnos
-        contextual_system = SYSTEM_PROMPT + f"\n\n---\nCONVERSACIÓN HASTA AHORA:\n{conv}\n---"
-        all_messages = [
-            {"role": "system", "content": contextual_system},
-            {"role": "user", "content": last_user},
-        ]
+    # Usar solo los últimos 6 mensajes para mantener contexto corto
+    trimmed = messages[-6:] if len(messages) > 6 else messages
+
+    # Saptiva devuelve vacío si el último mensaje de usuario es muy corto.
+    # Añadimos contexto mínimo para garantizar respuesta.
+    processed = list(trimmed)
+    if processed and processed[-1]["role"] == "user":
+        last_content = processed[-1]["content"].strip()
+        if len(last_content) < 35:
+            processed[-1] = {"role": "user", "content": last_content + " — continúa el registro por favor"}
+
+    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + processed
 
     for attempt in range(retries):
         try:
