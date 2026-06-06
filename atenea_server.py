@@ -1,9 +1,10 @@
 """
 Servidor ligero para Atenea iOS — onboarding conversacional de comerciantes.
 Usa Saptiva KAL. No requiere LangGraph ni Ollama.
-Ejecutar: uvicorn atenea_server:app --port 8000 --reload
+Ejecutar: python atenea_server.py
 """
 import os
+import time
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,40 +65,71 @@ class ChatRequest(BaseModel):
     messages: List[Message]
 
 
+def call_saptiva(messages: list, retries: int = 2) -> str:
+    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                f"{SAPTIVA_URL}/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {SAPTIVA_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "Saptiva KAL",
+                    "messages": all_messages,
+                    "temperature": 0.7,
+                    "max_tokens": 400,
+                    "stream": False,
+                },
+                timeout=55,
+            )
+
+            print(f"[Saptiva] status={resp.status_code} attempt={attempt+1}")
+
+            if not resp.ok:
+                print(f"[Saptiva] error body: {resp.text[:200]}")
+                if attempt < retries - 1:
+                    time.sleep(2)
+                    continue
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            print(f"[Saptiva] content length={len(content)}")
+
+            if content.strip():
+                return content
+
+            # Contenido vacío — reintentar
+            print(f"[Saptiva] content vacío, reintentando...")
+            if attempt < retries - 1:
+                time.sleep(2)
+
+        except requests.Timeout:
+            print(f"[Saptiva] timeout en intento {attempt+1}")
+            if attempt < retries - 1:
+                time.sleep(2)
+            else:
+                raise HTTPException(status_code=504, detail="Saptiva no respondió a tiempo")
+
+    raise HTTPException(status_code=502, detail="Saptiva no generó respuesta")
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     if not SAPTIVA_KEY:
         raise HTTPException(status_code=500, detail="SAPTIVA_API_KEY no configurada")
 
-    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    all_messages += [{"role": m.role, "content": m.content} for m in req.messages]
-
-    resp = requests.post(
-        f"{SAPTIVA_URL}/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {SAPTIVA_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "Saptiva KAL",
-            "messages": all_messages,
-            "temperature": 0.7,
-            "max_tokens": 400,
-            "stream": False,
-        },
-        timeout=55,
-    )
-
-    if not resp.ok:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
-    content = resp.json()["choices"][0]["message"]["content"]
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    content = call_saptiva(messages)
     return {"content": content}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "saptiva_key_set": bool(SAPTIVA_KEY)}
 
 
 if __name__ == "__main__":
