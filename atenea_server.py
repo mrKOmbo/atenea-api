@@ -66,9 +66,22 @@ class ChatRequest(BaseModel):
 
 
 def call_saptiva(messages: list, retries: int = 2) -> str:
-    # Mantener solo los últimos 6 mensajes para evitar contexto largo
-    trimmed = messages[-6:] if len(messages) > 6 else messages
-    all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + trimmed
+    # Saptiva falla con conversaciones multi-turno cortas.
+    # Convertimos el historial a un solo mensaje de contexto para garantizar compatibilidad.
+    if len(messages) <= 1:
+        all_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    else:
+        trimmed = messages[-6:] if len(messages) > 6 else messages
+        conv = "\n".join(
+            f"{'ARIA' if m['role'] == 'assistant' else 'Usuario'}: {m['content'].strip()}"
+            for m in trimmed[:-1]
+        )
+        last = trimmed[-1]["content"].strip()
+        wrapped = f"Historial:\n{conv}\n\nUsuario: {last}\n\nARIA:"
+        all_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": wrapped},
+        ]
 
     for attempt in range(retries):
         try:
