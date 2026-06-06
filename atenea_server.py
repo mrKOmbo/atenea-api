@@ -131,6 +131,15 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
     last_user = messages[-1]["content"].strip() if messages else ""
     state = extract_state(messages[:-1])  # estado antes del último mensaje
 
+    # Si ya tenemos los primeros 4 campos y el usuario está dando la descripción,
+    # completamos directamente sin llamar a Saptiva (evita loops de Saptiva)
+    collected = {k: state[k] for k in FIELDS if k in state and state[k]}
+    missing = [f for f in FIELDS if f not in collected]
+    if missing == ["description"] and len(last_user) >= 5:
+        complete = {**collected, "description": last_user}
+        state_json = json.dumps(complete, ensure_ascii=False)
+        return f"¡Perfecto, ya tengo todo! Tu negocio está listo para el radar SEDECO.\n[[EXTRACTED:{state_json}]]\n[[COMPLETE:true]]"
+
     if len(messages) <= 1:
         # Primer mensaje: single-turn normal
         all_messages = [
