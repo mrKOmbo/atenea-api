@@ -97,7 +97,7 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
                     "model": "Saptiva KAL",
                     "messages": all_messages,
                     "temperature": 0.7,
-                    "max_tokens": 200,
+                    "max_tokens": 250,
                     "stream": False,
                 },
                 timeout=45,
@@ -117,6 +117,9 @@ def call_saptiva(messages: list, retries: int = 2) -> str:
             print(f"[Saptiva] content length={len(content)}")
 
             if content.strip():
+                # Reparar marcador [[EXTRACTED:...]] si quedó truncado (un solo ])
+                if "[[EXTRACTED:" in content and content.rstrip().endswith("}]") and not content.rstrip().endswith("}]]"):
+                    content = content.rstrip() + "]"
                 return content
 
             # Contenido vacío — reintentar
