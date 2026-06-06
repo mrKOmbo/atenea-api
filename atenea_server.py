@@ -94,26 +94,36 @@ def build_single_turn(last_user: str, state: dict) -> str:
     collected = {k: state[k] for k in FIELDS if k in state and state[k]}
     missing = [f for f in FIELDS if f not in collected]
 
-    if not missing:
-        next_action = "confirma que el registro está completo y añade [[COMPLETE:true]]"
-    else:
-        next_field = missing[0]
-        field_hints = {
-            "businessName": "el nombre del negocio",
-            "businessType": "el tipo de negocio (food|clothing|crafts|beverages|electronics|services|other)",
-            "mobility": "si es ambulante o punto fijo (mobile|fixed)",
-            "businessSize": "el tamaño del equipo (individual|small|medium)",
-            "description": "una descripción breve de lo que vende",
-        }
-        next_action = f"pregunta por {field_hints.get(next_field, next_field)}"
+    field_labels = {
+        "businessName": "nombre del negocio",
+        "businessType": "tipo (food|clothing|crafts|beverages|electronics|services|other)",
+        "mobility": "movilidad (mobile|fixed)",
+        "businessSize": "tamaño del equipo (individual|small|medium)",
+        "description": "descripción breve de lo que vende",
+    }
 
-    state_str = json.dumps(collected, ensure_ascii=False) if collected else "ninguno aún"
+    if not missing:
+        next_instruction = "Confirma que el registro está completo con [[COMPLETE:true]]."
+    else:
+        current_field = missing[0]
+        current_label = field_labels[current_field]
+        # El usuario está respondiendo a la pregunta sobre current_field
+        next_field = missing[1] if len(missing) > 1 else None
+        next_label = field_labels[next_field] if next_field else None
+
+        next_instruction = (
+            f"Extrae '{current_field}' de la respuesta del comerciante. "
+            + (f"Luego pregunta por: {next_label}." if next_label else "Confirma el dato y cierra el registro con [[COMPLETE:true]].")
+        )
+
+    state_str = json.dumps(collected, ensure_ascii=False) if collected else "{}"
 
     return (
-        f"El comerciante acaba de decir: \"{last_user}\"\n"
-        f"Datos ya confirmados: {state_str}\n"
-        f"Tu siguiente acción: {next_action}.\n"
-        f"Responde como ARIA (máx 2 oraciones en español mexicano) e incluye [[EXTRACTED:{{...}}]] al final con todos los datos confirmados."
+        f"El comerciante responde: \"{last_user}\"\n"
+        f"Datos ya recopilados: {state_str}\n"
+        f"Instrucción: {next_instruction}\n"
+        f"Responde como ARIA (máx 2 oraciones, español mexicano natural). "
+        f"Al final incluye [[EXTRACTED:{{todos los datos confirmados}}]]."
     )
 
 
